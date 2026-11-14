@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>מונופול סטרימרים 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700&family=Rubik:wght@500;700;800&display=swap">
+<style>
+/* Layout: full-bleed WebGL board; glass panels float over it (players right, log left, actions bottom-center). Single dark look by design. */
+:root{
+  --bg:#070b18; --glass:rgba(12,19,42,.78); --line:#26335f; --fg:#e8edff; --mute:#8d9bc4;
+  --kick:#53fc18; --kick-ink:#06210a; --cyan:#22d3ee; --danger:#ff4d6d; --warn:#fbbf24;
+  --display:"Rubik","Heebo",system-ui,sans-serif; --body:"Heebo","Rubik",system-ui,sans-serif;
+  color-scheme:dark;
+}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;overflow:hidden}
+#app{position:relative;height:100%;direction:rtl;overflow:hidden;
+  --gl:max(16px,env(safe-area-inset-left,0px));--gr:max(16px,env(safe-area-inset-right,0px))}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#gl:active{cursor:grabbing}
+.glass{background:var(--glass);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+button{font:inherit;color:inherit;cursor:pointer;border:0}
+button:focus-visible,input:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+#top{position:absolute;top:12px;right:var(--gr);left:var(--gl);display:flex;align-items:center;justify-content:space-between;gap:12px;pointer-events:none}
+#top>*{pointer-events:auto}
+.brand{display:flex;align-items:center;gap:10px;padding:8px 14px}
+.brand b{font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.01em}
+.brand small{display:block;font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.32em;color:var(--kick);direction:ltr;text-align:right}
+.logo{width:34px;height:34px;border-radius:9px;background:var(--kick);display:grid;place-items:center;color:var(--kick-ink);font-weight:800;font-family:var(--display)}
+.tools{display:flex;gap:6px;padding:6px}
+.tools button{background:transparent;padding:7px 11px;border-radius:9px;color:var(--fg);font-size:13px}
+.tools button:hover{background:rgba(255,255,255,.08)}
+.tools button[aria-pressed=true]{background:rgba(83,252,24,.16);color:var(--kick)}
+
+#players{position:absolute;top:72px;right:var(--gr);width:262px;display:flex;flex-direction:column;gap:8px;max-height:calc(100% - 230px);overflow:auto}
+.pl{padding:10px 12px;display:grid;gap:6px;transition:border-color .2s,box-shadow .2s}
+.pl.turn{border-color:var(--pc);box-shadow:0 0 0 1px var(--pc),0 0 22px -6px var(--pc)}
+.pl.out{opacity:.45}
+.pl-h{display:flex;align-items:center;gap:8px;font-family:var(--display);font-weight:700}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--pc);flex:none}
+.pl-h span:nth-child(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{font-size:11px;padding:2px 7px;border-radius:99px;background:rgba(255,255,255,.08);color:var(--mute);font-family:var(--body);font-weight:500}
+.tag.bad{background:rgba(255,77,109,.18);color:#ff9fb0}
+.cash{font-family:var(--display);font-weight:800;font-size:22px;font-variant-numeric:tabular-nums}
+.cash small{font-size:12px;font-weight:500;color:var(--mute);margin-inline-start:4px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;min-height:10px}
+.chip{width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.25);position:relative}
+.chip i{position:absolute;inset:auto 0 -5px 0;text-align:center;font-style:normal;font-size:8px;line-height:8px;color:#fff}
+
+#players.many .pl{padding:6px 10px;gap:3px}#players.many .cash{font-size:17px}#players.many .pl-h{font-size:14px}
+#log{position:absolute;left:var(--gl);bottom:16px;width:290px;max-height:200px;overflow:auto;padding:10px 12px;font-size:13px;display:flex;flex-direction:column;gap:5px;color:var(--mute)}
+#log div{line-height:1.35}
+#log div:last-child{color:var(--fg)}
+#log b{color:var(--fg);font-weight:700}
+
+#bar{box-sizing:border-box;position:absolute;bottom:16px;left:50%;transform:translateX(-50%);width:min(560px,calc(100% - 32px));padding:12px 14px;display:grid;gap:10px;text-align:center}
+#prompt{font-family:var(--display);font-weight:700;font-size:16px;min-height:22px}
+#prompt small{display:block;font-family:var(--body);font-weight:400;font-size:13px;color:var(--mute);margin-top:2px}
+#btns{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.btn{padding:11px 18px;border-radius:11px;background:rgba(255,255,255,.09);font-weight:700;font-size:15px;transition:transform .12s,background .12s}
+.btn:hover{background:rgba(255,255,255,.16)}
+.btn:active{transform:scale(.97)}
+.btn.main{background:var(--kick);color:var(--kick-ink)}
+.btn.main:hover{background:#7dff4d}
+.btn[disabled]{opacity:.35;cursor:not-allowed}
+
+#tile-info{position:absolute;top:72px;left:var(--gl);width:240px;padding:12px 14px;display:grid;gap:4px;font-size:13px}
+#tile-info h4{margin:0;font-family:var(--display);font-size:16px}
+#tile-info .row{display:flex;justify-content:space-between;color:var(--mute)}
+#tile-info .row b{color:var(--fg);font-variant-numeric:tabular-nums}
+
+#card{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:4}
+.card-in{width:min(340px,calc(100% - 48px));padding:22px;border-radius:18px;background:#101a3a;border:2px solid var(--cc,var(--cyan));text-align:center;box-shadow:0 20px 60px -10px #000;animation:pop .35s cubic-bezier(.2,1.4,.4,1);margin-bottom:120px}
+.card-in small{font-family:var(--display);letter-spacing:.18em;font-size:11px;color:var(--cc,var(--cyan));font-weight:700}
+.card-in h3{margin:8px 0;font-family:var(--display);font-size:22px;font-weight:800}
+.card-in p{margin:0;color:var(--fg);line-height:1.5}
+@keyframes pop{from{transform:translateY(24px) scale(.9);opacity:0}to{transform:none;opacity:1}}
+
+.modal{position:absolute;inset:0;z-index:10;display:grid;place-items:center;background:rgba(4,7,16,.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:16px var(--gr) 16px var(--gl);overflow:auto}
+.modal-in{width:min(460px,100%);padding:24px;display:grid;gap:16px;background:#0e1633;border:1px solid var(--line);border-radius:20px}
+.modal h1,.modal h2{margin:0;font-family:var(--display);font-weight:800;line-height:1.1}
+.modal h1{font-size:30px}
+.modal h1 em{display:block;font-style:normal;font-size:11px;letter-spacing:.34em;color:var(--kick);margin-top:6px;direction:ltr;text-align:right}
+.modal p{margin:0;color:var(--mute);line-height:1.5}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{flex:1;min-width:38px;padding:9px 0;border-radius:10px;background:rgba(255,255,255,.07);font-weight:700}
+.seg button[aria-pressed=true]{background:var(--kick);color:var(--kick-ink)}
+.prow{display:grid;grid-template-columns:14px 1fr auto;gap:10px;align-items:center}
+.prow input[type=text]{background:#070c1f;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--fg);font:inherit;min-width:0}
+.prow label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute);white-space:nowrap}
+.prow input[type=checkbox]{accent-color:var(--kick);width:16px;height:16px}
+.lbl{font-size:13px;color:var(--mute);font-weight:500}
+#kickBox{display:grid;gap:12px}#kickBox b{color:var(--kick)}#kickBox a{color:var(--cyan)}
+.krow{display:flex;gap:8px}
+.krow input,#kroom{flex:1;min-width:0;background:#070c1f;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--fg);font:inherit}
+#klist{display:grid;gap:6px}
+.kx{background:transparent;color:var(--mute);padding:4px 8px;border-radius:8px}.kx:hover{background:rgba(255,255,255,.08)}
+details summary{cursor:pointer;color:var(--mute);font-size:13px}
+#nolib{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;z-index:20;background:var(--bg)}
+
+@media (max-width:820px){
+  .brand{padding:6px 10px;gap:8px}.brand b{font-size:14px;white-space:nowrap}
+  .tools{padding:4px}.tools button{white-space:nowrap}
+  #players{top:70px;right:var(--gr);left:var(--gl);width:auto;flex-direction:row;overflow-x:auto;overflow-y:hidden;max-height:none;padding-bottom:2px}
+  .pl{min-width:150px;flex:1}
+  #log,#tile-info{display:none}
+  .brand small{display:none}
+  .tools button{padding:7px 8px;font-size:12px}
+  #bar{bottom:max(12px,env(safe-area-inset-bottom,0px))}
+}
+@media (prefers-reduced-motion:reduce){.card-in{animation:none}.btn{transition:none}}
+</style>
+</head>
+<body>
+
+<div id="app" dir="rtl">
+  <canvas id="gl" aria-label="לוח המשחק בתלת-ממד"></canvas>
+
+  <header id="top">
+    <div class="brand glass"><div class="logo">K</div><div><b>מונופול סטרימרים</b><small>KICK ISRAEL EDITION</small></div></div>
+    <div class="tools glass" role="group" aria-label="מצלמה">
+      <button id="cAngle" type="button">זווית</button>
+      <button id="cTop" type="button">מבט על</button>
+      <button id="cSpin" type="button" aria-pressed="false">סיבוב</button>
+      <button id="cSnd" type="button" aria-pressed="true">צליל</button>
+      <button id="cMus" type="button" aria-pressed="true">מוזיקה</button>
+      <button id="cNew" type="button">משחק חדש</button>
+    </div>
+  </header>
+
+  <aside id="players" aria-label="שחקנים"></aside>
+  <section id="log" class="glass" aria-live="polite"></section>
+  <div id="tile-info" class="glass" hidden></div>
+  <div id="card" hidden><div class="card-in"><small id="card-k"></small><h3 id="card-t"></h3><p id="card-b"></p></div></div>
+
+  <div id="bar" class="glass" hidden><div id="prompt"></div><div id="btns"></div></div>
+
+  <div id="setup" class="modal">
+    <div class="modal-in">
+      <h1>מונופול סטרימרים<em>KICK ISRAEL EDITION</em></h1>
+      <p>הלוח עם הסטרימרים הישראליים, עכשיו בתלת-ממד. גוררים כדי לסובב, גלגלת או צביטה כדי לקרב, לחיצה על קובייה מציגה פרטים.</p>
+      <div><div class="lbl" style="margin-bottom:6px">איך מצטרפים?</div>
+        <div class="seg" id="mode"><button type="button" data-m="local" aria-pressed="true">מקומי</button><button type="button" data-m="kick" aria-pressed="false">צ׳אט קיק</button></div></div>
+      <div id="cntBox"><div class="lbl" style="margin-bottom:6px">כמה שחקנים?</div>
+        <div class="seg" id="count"><button type="button" data-n="2" aria-pressed="true">2</button><button type="button" data-n="3" aria-pressed="false">3</button><button type="button" data-n="4" aria-pressed="false">4</button><button type="button" data-n="5" aria-pressed="false">5</button><button type="button" data-n="6" aria-pressed="false">6</button><button type="button" data-n="7" aria-pressed="false">7</button><button type="button" data-n="8" aria-pressed="false">8</button><button type="button" data-n="9" aria-pressed="false">9</button><button type="button" data-n="10" aria-pressed="false">10</button></div></div>
+      <div id="rows" style="display:grid;gap:8px"></div>
+      <div id="kickBox" hidden>
+        <div><label class="lbl" for="kch" style="display:block;margin-bottom:6px">שם הערוץ בקיק</label>
+          <div class="krow"><input type="text" id="kch" dir="ltr" placeholder="channel" autocomplete="off"><button id="kcon" class="btn" type="button">חבר</button></div></div>
+        <div><label class="lbl" for="kroom" style="display:block;margin-bottom:6px">מזהה חדר הצ׳אט</label>
+          <input type="text" id="kroom" dir="ltr" autocomplete="off" placeholder="הדביקו כאן את הטקסט שהעתקתם, או את המספר" style="width:100%;box-sizing:border-box">
+          <div class="lbl" style="margin-top:6px">אין מזהה? <a id="kapi" href="https://kick.com/api/v2/channels/" target="_blank" rel="noopener">פתחו את נתוני הערוץ בלשונית חדשה</a>, סמנו הכל (Ctrl+A), העתיקו (Ctrl+C) והדביקו כאן. המשחק מוצא את המספר לבד.</div></div>
+        <details><summary>מתקדם: מפתח Pusher</summary>
+          <input type="text" id="kkey" dir="ltr" autocomplete="off" placeholder="ברירת מחדל מעודכנת, ריק = אוטומטי" style="margin-top:8px;width:100%;box-sizing:border-box;background:#070c1f;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--fg);font:inherit"></details>
+        <div id="kstat" class="lbl" role="status">לא מחובר</div>
+        <div class="prow" style="grid-template-columns:auto 1fr"><label><input type="checkbox" id="kmeOn" checked>הסטרימר משחק</label><input type="text" id="kme" maxlength="14" placeholder="שם הסטרימר" aria-label="שם הסטרימר"></div>
+        <div id="klist"></div>
+        <p class="lbl">הצופים כותבים <b>!join</b> בצ׳אט כדי להצטרף (עד 10 שחקנים בסך הכול, כולל הסטרימר). בתור שלהם: <b>!roll</b> גלגול · <b>!buy</b> קנייה · <b>!skip</b> דילוג · <b>!pay</b> תשלום 50 בכלא · <b>!up</b> שדרוג · <b>!end</b> סיום תור · <b>!ok</b> אישור קלף. אם חסרים שחקנים, בוטים ימלאו את השאר.</p>
+      </div>
+      <button id="start" class="btn main" type="button">התחל משחק</button>
+    </div>
+  </div>
+
+  <div id="win" class="modal" hidden>
+    <div class="modal-in" style="text-align:center">
+      <h2 id="win-t"></h2><p id="win-p"></p>
+      <button id="again" class="btn main" type="button">משחק חדש</button>
+    </div>
+  </div>
+
+  <div id="nolib" hidden><div><h2>לא הצלחנו לטעון את מנוע ה-3D</h2><p>בדוק את החיבור לאינטרנט ורענן את העמוד.</p></div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(()=>{
+const $=s=>document.querySelector(s);
+if(!window.THREE){$('#nolib').hidden=false;$('#setup').hidden=true;return}
+
+/* ───────── נתוני הלוח ───────── */
+const GC={br:'#8d5a3b',lb:'#38bdf8',pk:'#ec4899',or:'#fb923c',rd:'#ef4444',yl:'#facc15',gr:'#22c55e',bl:'#3b82f6'};
+const T=(n,t,p,g)=>({n,t,p,g});
+const TILES=[
+T('GO','go'),T('אראל בת המזל','prop',60,'br'),T('תיבת המזל','chest'),T('אוריה בת המזל','prop',60,'br'),
+T('מס הכנסה','tax',200),T('רכבת הפרברים','rail',200),T("צ'אבי",'prop',100,'lb'),T('הפתעה','surp'),
+T('אקספינר','prop',100,'lb'),T('שירי','prop',120,'lb'),
+T('כלא','jail'),T('שילו','prop',140,'pk'),T('חברת החשמל','util',150),T('ששי','prop',140,'pk'),
+T('מוטי','prop',160,'pk'),T('רכבת משא טיקטוק','rail',200),T('זיווי','prop',180,'or'),T('תיבת המזל','chest'),
+T('יקיר','prop',180,'or'),T('ביגי','prop',200,'or'),
+T('חניה חופשית','park'),T('סייקניק','prop',220,'rd'),T('הפתעה','surp'),T('סנסיי','prop',220,'rd'),
+T('ליאור','prop',240,'rd'),T('רכבת תחתית יוטיוב','rail',200),T('פרנזי','prop',260,'yl'),T('פדרו','prop',260,'yl'),
+T('חברת האינטרנט','util',150),T('מיכאל','prop',280,'yl'),
+T('לך לכלא','gojail'),T('רונן','prop',300,'gr'),T('אוהד','prop',300,'gr'),T('תיבת המזל','chest'),
+T('עדן','prop',320,'gr'),T("רכבת צפון טוויץ'",'rail',200),T('הפתעה','surp'),T('עודד','prop',350,'bl'),
+T('תרומה לקהילה','tax',100),T('מאור','prop',400,'bl')];
+const RM=[.1,.25,.5,.8];
+const PCOL=['#53fc18','#22d3ee','#f472b6','#fbbf24','#a78bfa','#fb7185','#34d399','#60a5fa','#f97316','#e5e7eb'];
+const MAXP=10;
+const money=n=>n.toLocaleString('he-IL')+' קיקס';
+
+const S=2.2,W=1.4,H=8.5;
+function tileXf(i){
+  let x,z,r=0;
+  if(i===0){x=-H+S/2;z=H-S/2}
+  else if(i<10){x=-H+S+W*(i-1)+W/2;z=H-S/2}
+  else if(i===10){x=H-S/2;z=H-S/2}
+  else if(i<20){x=H-S/2;z=H-S-W*(i-11)-W/2;r=Math.PI/2}
+  else if(i===20){x=H-S/2;z=-H+S/2}
+  else if(i<30){x=H-S-W*(i-21)-W/2;z=-H+S/2;r=Math.PI}
+  else if(i===30){x=-H+S/2;z=-H+S/2}
+  else{x=-H+S/2;z=-H+S+W*(i-31)+W/2;r=-Math.PI/2}
+  return{x,z,r};
+}
+const isCorner=i=>i%10===0;
+
+/* ───────── Three.js ───────── */
+const canvas=$('#gl');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x070b18);
+scene.fog=new THREE.Fog(0x070b18,40,110);
+const camera=new THREE.PerspectiveCamera(40,1,.1,300);
+
+scene.add(new THREE.HemisphereLight(0xb7c8ff,0x1b1236,.85));
+const sun=new THREE.DirectionalLight(0xffffff,.95);
+sun.position.set(7,18,10);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-13,right:13,top:13,bottom:-13,near:1,far:50});
+sun.shadow.camera.updateProjectionMatrix();sun.shadow.bias=-.0004;scene.add(sun);
+const rim=new THREE.PointLight(0x53fc18,.8,60);rim.position.set(-14,5,-14);scene.add(rim);
+const rim2=new THREE.PointLight(0x22d3ee,.7,60);rim2.position.set(14,5,14);scene.add(rim2);
+
+// ground + neon ring + stars
+const floor=new THREE.Mesh(new THREE.CircleGeometry(60,64),new THREE.MeshStandardMaterial({color:0x080d1f,roughness:.9}));
+floor.rotation.x=-Math.PI/2;floor.position.y=-.5;floor.receiveShadow=true;scene.add(floor);
+const ring=new THREE.Mesh(new THREE.RingGeometry(13.2,13.45,96),new THREE.MeshBasicMaterial({color:0x53fc18,transparent:true,opacity:.55,side:THREE.DoubleSide}));
+ring.rotation.x=-Math.PI/2;ring.position.y=-.49;scene.add(ring);
+{const n=500,a=new Float32Array(n*3);for(let i=0;i<n;i++){const r=55+Math.random()*60,t=Math.random()*6.283,u=Math.random()*1.2+.05;a[i*3]=r*Math.cos(t)*Math.sin(u+.3);a[i*3+1]=r*Math.cos(u+.3)*.7+8;a[i*3+2]=r*Math.sin(t)*Math.sin(u+.3)}
+const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(a,3));
+scene.add(new THREE.Points(g,new THREE.PointsMaterial({color:0x9fb4ff,size:.35,sizeAttenuation:true,transparent:true,opacity:.7})))}
+
+// board base
+const base=new THREE.Mesh(new THREE.BoxGeometry(17.7,.5,17.7),new THREE.MeshStandardMaterial({color:0x0b1226,roughness:.6,metalness:.2}));
+base.position.y=-.25;base.receiveShadow=true;base.castShadow=true;scene.add(base);
+
+/* canvas textures */
+function wrap(ctx,text,maxW){const ws=text.split(' '),out=[];let cur='';
+  for(const w of ws){const t=cur?cur+' '+w:w;if(ctx.measureText(t).width>maxW&&cur){out.push(cur);cur=w}else cur=t}
+  if(cur)out.push(cur);return out}
+function tileCanvas(i){
+  const t=TILES[i],c=document.createElement('canvas'),corner=isCorner(i);
+  const w=corner?440:280,h=440;c.width=w;c.height=h;
+  const x=c.getContext('2d');x.direction='rtl';x.textAlign='center';x.textBaseline='middle';
+  const F=(s,wt=700,f='Rubik')=>`${wt} ${s}px ${f}, Heebo, sans-serif`;
+  let bg='#111a33';
+  if(t.t==='go')bg='#0f2a1a';if(t.t==='jail')bg='#2a1a0f';if(t.t==='park')bg='#10223a';if(t.t==='gojail')bg='#2e1018';
+  x.fillStyle=bg;x.fillRect(0,0,w,h);
+  x.strokeStyle='#2b3a6b';x.lineWidth=6;x.strokeRect(3,3,w-6,h-6);
+  const cx=w/2;
+  const title=(txt,y,size,col='#fff',maxW=w-40)=>{x.font=F(size);x.fillStyle=col;const ls=wrap(x,txt,maxW);
+    const lh=size*1.18;ls.forEach((l,k)=>x.fillText(l,cx,y+(k-(ls.length-1)/2)*lh));};
+  if(t.t==='prop'){
+    x.fillStyle=GC[t.g];x.fillRect(6,6,w-12,92);
+    x.fillStyle='rgba(0,0,0,.28)';x.font=F(30,800);x.fillText(`סט ${{br:'חום',lb:'תכלת',pk:'ורוד',or:'כתום',rd:'אדום',yl:'צהוב',gr:'ירוק',bl:'כחול'}[t.g]}`,cx,52);
+    title(t.n,230,t.n.length>12?46:54);
+    x.font=F(38,800);x.fillStyle='#53fc18';x.fillText(`${t.p} קיקס`,cx,388);
+  }else if(t.t==='rail'){
+    x.fillStyle='#94a3b8';x.fillRect(6,6,w-12,92);x.fillStyle='rgba(0,0,0,.35)';x.font=F(30,800);x.fillText('תחבורה',cx,52);
+    x.font=F(96);x.fillStyle='#cbd5e1';x.fillText('🚆',cx,190);
+    title(t.n,300,34,'#fff',w-30);
+    x.font=F(38,800);x.fillStyle='#53fc18';x.fillText(`${t.p} קיקס`,cx,402);
+  }else if(t.t==='util'){
+    x.fillStyle='#a78bfa';x.fillRect(6,6,w-12,92);x.fillStyle='rgba(0,0,0,.35)';x.font=F(30,800);x.fillText('שירות',cx,52);
+    x.font=F(100);x.fillText(t.n.includes('חשמל')?'⚡':'🌐',cx,200);
+    title(t.n,310,40);
+    x.font=F(38,800);x.fillStyle='#53fc18';x.fillText(`${t.p} קיקס`,cx,402);
+  }else if(t.t==='chest'||t.t==='surp'){
+    const col=t.t==='chest'?'#22d3ee':'#f472b6';
+    x.fillStyle=col;x.fillRect(6,6,w-12,92);x.fillStyle='rgba(0,0,0,.35)';x.font=F(30,800);x.fillText(t.t==='chest'?'קלף':'קלף',cx,52);
+    x.font=F(120,800);x.fillStyle=col;x.fillText('?',cx,225);
+    title(t.n,340,44,'#fff');
+  }else if(t.t==='tax'){
+    x.fillStyle='#64748b';x.fillRect(6,6,w-12,92);x.fillStyle='rgba(0,0,0,.35)';x.font=F(30,800);x.fillText('תשלום',cx,52);
+    x.font=F(90);x.fillText('💰',cx,200);
+    title(t.n,300,40);x.font=F(38,800);x.fillStyle='#ff6b81';x.fillText(`שלם ${t.p}`,cx,396);
+  }else if(t.t==='go'){
+    x.fillStyle='#53fc18';x.font=F(170,800);x.fillText('GO',cx,170);
+    x.font=F(80);x.fillStyle='#53fc18';x.fillText('➡',cx,290);
+    title('איסוף 200 קיקס',365,38,'#fff');title('דרך הצלחה',410,24,'#8d9bc4');
+  }else if(t.t==='jail'){
+    x.fillStyle='rgba(255,77,109,.9)';x.fillRect(150,150,260,260);
+    x.fillStyle='#fff';x.font=F(100);x.fillText('🔒',280,250);x.font=F(48,800);x.fillText('כלא',280,350);
+    x.font=F(30,500);x.fillStyle='#fbbf24';x.textAlign='center';x.fillText('מבקר בלבד',cx-60,58);
+  }else if(t.t==='park'){
+    x.font=F(110);x.fillText('🅿️',cx,170);title('חניה חופשית',290,50,'#fff');title('טיימאאוט',370,36,'#22d3ee');
+  }else if(t.t==='gojail'){
+    x.font=F(110);x.fillText('🚫',cx,160);title('לך לכלא',275,56,'#ff6b81');title('קיבלת באן!',360,38,'#fff');
+  }
+  return c;
+}
+function mkTex(c){const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;t.anisotropy=renderer.capabilities.getMaxAnisotropy();return t}
+
+function centerCanvas(){
+  const c=document.createElement('canvas');c.width=c.height=1024;const x=c.getContext('2d');
+  x.fillStyle='#0a1124';x.fillRect(0,0,1024,1024);
+  x.save();x.rotate(-Math.PI/4);x.fillStyle='rgba(120,150,255,.07)';
+  for(let k=-1500;k<1500;k+=70)x.fillRect(k,-1500,32,3000);x.restore();
+  x.strokeStyle='#26335f';x.lineWidth=6;x.strokeRect(6,6,1012,1012);
+  x.direction='rtl';x.textAlign='center';x.textBaseline='middle';
+  const g=x.createRadialGradient(512,300,10,512,300,200);g.addColorStop(0,'rgba(83,252,24,.35)');g.addColorStop(1,'rgba(83,252,24,0)');
+  x.fillStyle=g;x.fillRect(262,50,500,500);
+  x.fillStyle='#53fc18';x.beginPath();x.roundRect?x.roundRect(442,240,140,140,34):x.rect(442,240,140,140);x.fill();
+  x.fillStyle='#06210a';x.font='800 96px Rubik, Heebo, sans-serif';x.fillText('K',512,312);
+  x.fillStyle='#fff';x.font='800 118px Rubik, Heebo, sans-serif';x.fillText('מונופול סטרימרים',512,470);
+  x.save();x.translate(512,580);x.rotate(-.07);x.fillStyle='#ff3d5a';x.fillRect(-270,-44,540,88);
+  x.fillStyle='#fff';x.direction='ltr';x.font='800 54px Rubik, sans-serif';x.fillText('KICK ISRAEL',0,2);x.restore();
+  x.direction='ltr';x.fillStyle='#8d9bc4';x.font='700 30px Rubik, sans-serif';x.fillText('E D I T I O N',512,660);
+  return c;
+}
+
+/* tiles */
+const tiles=[];
+function buildBoard(){
+  TILES.forEach((t,i)=>{
+    const {x,z,r}=tileXf(i),corner=isCorner(i),w=corner?S:W;
+    const g=new THREE.Group();g.position.set(x,0,z);g.rotation.y=r;
+    const box=new THREE.Mesh(new THREE.BoxGeometry(w-.06,.12,S-.06),new THREE.MeshStandardMaterial({color:0x172345,roughness:.7}));
+    box.position.y=.06;box.castShadow=true;box.receiveShadow=true;g.add(box);
+    const mat=new THREE.MeshStandardMaterial({map:mkTex(tileCanvas(i)),roughness:.55,emissive:0x000000,emissiveIntensity:.5});
+    const pl=new THREE.Mesh(new THREE.PlaneGeometry(w-.1,S-.1),mat);pl.rotation.x=-Math.PI/2;pl.position.y=.122;pl.receiveShadow=true;pl.userData.tile=i;g.add(pl);
+    scene.add(g);
+    tiles.push({g,mat,pl,bar:null,tower:null,w});
+  });
+  const cm=new THREE.Mesh(new THREE.PlaneGeometry(12.6,12.6),new THREE.MeshStandardMaterial({map:mkTex(centerCanvas()),roughness:.8}));
+  cm.rotation.x=-Math.PI/2;cm.position.y=.012;cm.receiveShadow=true;scene.add(cm);
+}
+
+/* owner markers + towers */
+function refreshMarks(){
+  tiles.forEach((tl,i)=>{
+    const o=owner[i],t=TILES[i];
+    if(tl.bar){tl.g.remove(tl.bar);tl.bar=null}
+    if(tl.tower){tl.g.remove(tl.tower);tl.tower=null}
+    if(o<0)return;
+    const col=new THREE.Color(players[o].color);
+    const bar=new THREE.Mesh(new THREE.BoxGeometry(tl.w-.15,.07,.16),new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:.6}));
+    bar.position.set(0,.16,S/2-.17);bar.castShadow=true;tl.g.add(bar);tl.bar=bar;
+    if(t.t==='prop'&&lvl[i]>0){
+      const grp=new THREE.Group();
+      for(let k=0;k<lvl[i];k++){
+        const b=new THREE.Mesh(new THREE.BoxGeometry(.7-k*.1,.32,.55-k*.06),new THREE.MeshStandardMaterial({color:col.clone().lerp(new THREE.Color(0xffffff),.25),roughness:.35,metalness:.2,emissive:col,emissiveIntensity:.18}));
+        b.position.set(0,.12+.16+k*.32,-.25);b.castShadow=true;grp.add(b);
+      }
+      tl.g.add(grp);tl.tower=grp;
+    }
+  });
+}
+
+/* pawns */
+function pawnGeo(){
+  const pts=[[0,0],[.3,0],[.3,.07],[.17,.16],[.12,.3],[.13,.42],[.22,.46],[.22,.52],[.12,.56],[0,.58]].map(p=>new THREE.Vector2(p[0],p[1]));
+  return new THREE.LatheGeometry(pts,24);
+}
+const PG=pawnGeo(),HG=new THREE.SphereGeometry(.2,20,16);
+function makePawn(col,n){
+  const g=new THREE.Group(),m=new THREE.MeshStandardMaterial({color:col,roughness:.3,metalness:.35,emissive:col,emissiveIntensity:.18});
+  const b=new THREE.Mesh(PG,m);b.castShadow=true;g.add(b);
+  const h=new THREE.Mesh(HG,m);h.position.y=.74;h.castShadow=true;g.add(h);
+  g.scale.setScalar(n>4?.9:1.1);return g;
+}
+const SLOT=Array.from({length:10},(_,i)=>[i%2?.3:-.3,(Math.floor(i/2)-2)*.36]); // מקומי לקובייה: רוחב, עומק
+function tokenXZ(p,pos,jailed){
+  const {x,z,r}=tileXf(pos),[lx,lz]=SLOT[p.i];
+  if(pos===10){return jailed?[x-.45+lx*.6,z-.45+lz*.45]:[x+.5+lx*.5,z+.55+lz*.35]}
+  const c=Math.cos(r),sn=Math.sin(r);
+  return [x+lx*c+lz*sn,z-lx*sn+lz*c];
+}
+
+/* dice */
+const FACE=[3,4,1,6,2,5];
+const PIPS={1:[[.5,.5]],2:[[.25,.25],[.75,.75]],3:[[.25,.25],[.5,.5],[.75,.75]],4:[[.25,.25],[.75,.25],[.25,.75],[.75,.75]],5:[[.25,.25],[.75,.25],[.5,.5],[.25,.75],[.75,.75]],6:[[.25,.25],[.75,.25],[.25,.5],[.75,.5],[.25,.75],[.75,.75]]};
+function diceMat(v){const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d');
+  x.fillStyle='#f6f8ff';x.fillRect(0,0,128,128);x.strokeStyle='#cdd5f0';x.lineWidth=6;x.strokeRect(3,3,122,122);
+  x.fillStyle=v===1?'#e11d48':'#0b1226';PIPS[v].forEach(([a,b])=>{x.beginPath();x.arc(a*128,b*128,v===1?16:11,0,7);x.fill()});
+  const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;return new THREE.MeshStandardMaterial({map:t,roughness:.35})}
+const diceMats=FACE.map(diceMat);
+const dice=[0,1].map(k=>{const m=new THREE.Mesh(new THREE.BoxGeometry(.8,.8,.8),diceMats);m.castShadow=true;scene.add(m);
+  m.position.set(k?1:-1,.41,.4);m.rotation.set(0,k?.5:-.4,0);return m});
+const FQ=[new THREE.Euler(0,0,Math.PI/2),new THREE.Euler(0,0,-Math.PI/2),new THREE.Euler(0,0,0),new THREE.Euler(Math.PI,0,0),new THREE.Euler(-Math.PI/2,0,0),new THREE.Euler(Math.PI/2,0,0)].map(e=>new THREE.Quaternion().setFromEuler(e));
+function topQuat(v){const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),Math.random()*6.283);return q.multiply(FQ[FACE.indexOf(v)])}
+
+/* camera */
+const cam={th:0,ph:.95,d:25,auto:false,tPh:null,tD:null};
+const focus=new THREE.Vector3(),focusT=new THREE.Vector3();
+function fitDist(){return innerWidth/innerHeight<.9?40:innerWidth<1100?29:25}
+cam.d=fitDist();
+function camUpdate(){
+  if(cam.auto&&!drag)cam.th+=.0025;
+  if(cam.tPh!=null){cam.ph+=(cam.tPh-cam.ph)*.08;if(Math.abs(cam.tPh-cam.ph)<.002)cam.tPh=null}
+  if(cam.tD!=null){cam.d+=(cam.tD-cam.d)*.08;if(Math.abs(cam.tD-cam.d)<.05)cam.tD=null}
+  focus.lerp(focusT,.06);
+  const s=Math.sin(cam.ph);
+  camera.position.set(focus.x+cam.d*s*Math.sin(cam.th),focus.y+cam.d*Math.cos(cam.ph),focus.z+cam.d*s*Math.cos(cam.th));
+  camera.lookAt(focus);
+}
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+addEventListener('resize',()=>{resize();if(cam.tD==null)cam.d=Math.max(cam.d,fitDist()*.7)});
+resize();
+
+let drag=false;const ptrs=new Map();let lastPinch=0,downAt=null;
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});downAt={x:e.clientX,y:e.clientY};drag=false;cam.tPh=cam.tD=null;
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];lastPinch=Math.hypot(a.x-b.x,a.y-b.y)}});
+canvas.addEventListener('pointermove',e=>{const p=ptrs.get(e.pointerId);if(!p)return;
+  if(ptrs.size===1){const dx=e.clientX-p.x,dy=e.clientY-p.y;
+    if(downAt&&Math.hypot(e.clientX-downAt.x,e.clientY-downAt.y)>5)drag=true;
+    if(drag){cam.th-=dx*.0065;cam.ph=Math.min(1.45,Math.max(.12,cam.ph-dy*.005))}}
+  p.x=e.clientX;p.y=e.clientY;
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()],d=Math.hypot(a.x-b.x,a.y-b.y);cam.d=Math.min(48,Math.max(10,cam.d*(lastPinch/d)));lastPinch=d;drag=true}});
+function up(e){const was=ptrs.has(e.pointerId);ptrs.delete(e.pointerId);
+  if(was&&!drag&&ptrs.size===0&&e.type==='pointerup')pick(e.clientX,e.clientY);
+  setTimeout(()=>{if(!ptrs.size)drag=false},0)}
+canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
+canvas.addEventListener('wheel',e=>{e.preventDefault();cam.d=Math.min(48,Math.max(10,cam.d*(1+e.deltaY*.0012)))},{passive:false});
+
+const ray=new THREE.Raycaster(),mv=new THREE.Vector2();
+function pick(px,py){
+  mv.set(px/innerWidth*2-1,-(py/innerHeight)*2+1);ray.setFromCamera(mv,camera);
+  const hit=ray.intersectObjects(tiles.map(t=>t.pl))[0];
+  if(hit)showTile(hit.object.userData.tile);else $('#tile-info').hidden=true;
+}
+function showTile(i){
+  const t=TILES[i],el=$('#tile-info');const rows=[];
+  if(t.p)rows.push(['מחיר',t.p]);
+  if(t.t==='prop'){rows.push(['שכירות בסיס',Math.max(5,Math.round(t.p*RM[0]/5)*5)]);rows.push(['עם סט מלא',Math.max(5,Math.round(t.p*RM[0]*2/5)*5)]);rows.push(['שדרוג מלא',Math.round(t.p*RM[3]/5)*5])}
+  if(t.t==='rail')rows.push(['שכירות','25 / 50 / 100 / 200']);
+  if(t.t==='util')rows.push(['שכירות','4× / 10× קוביות']);
+  if(o_(i)!=null)rows.push(['בעלים',o_(i)]);
+  el.innerHTML=`<h4>${t.n}</h4>`+rows.map(r=>`<div class="row"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
+  el.hidden=false;
+}
+const o_=i=>owner[i]>=0?players[owner[i]].name+(lvl[i]?` · רמה ${lvl[i]}`:''):null;
+
+/* ───────── לוגיקה ───────── */
+let players=[],owner=[],lvl=[],ti=0,lastRoll=0,running=false,hi=-1,gameId=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* ───────── סאונד (WebAudio, נוצר בקוד) ───────── */
+let AC=null,muted=false,musicOn=true,master=null,sfxBus=null,musBus=null;
+try{muted=localStorage.getItem('mono-mute')==='1';musicOn=localStorage.getItem('mono-music')!=='0'}catch(e){}
+function ac(){
+  if(!AC){
+    try{
+      AC=new (window.AudioContext||window.webkitAudioContext)();
+      master=AC.createGain();master.gain.value=1;
+      const comp=AC.createDynamicsCompressor();comp.threshold.value=-16;comp.knee.value=24;comp.ratio.value=5;comp.attack.value=.004;comp.release.value=.2;
+      master.connect(comp);comp.connect(AC.destination);
+      sfxBus=AC.createGain();sfxBus.gain.value=1;sfxBus.connect(master);
+      musBus=AC.createGain();musBus.gain.value=musicOn?.3:0;musBus.connect(master);
+      const dl=AC.createDelay(1);dl.delayTime.value=.19;const fb=AC.createGain();fb.gain.value=.3;const wet=AC.createGain();wet.gain.value=.26;
+      sfxBus.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(wet);wet.connect(master);
+    }catch(e){AC=null}
+  }
+  if(AC&&AC.state==='suspended')AC.resume();
+  return AC;
+}
+function tone(f,d,type='sine',v=.25,t0=0,f2,bus){
+  const a=ac();if(!a||(!bus&&muted))return;
+  const t=a.currentTime+Math.max(0,t0),g=a.createGain();
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(v,t+.012);g.gain.exponentialRampToValueAtTime(.0001,t+d);
+  [[1,0,1],[1,7,.5],[2,0,.18]].forEach(([m,dt,vol])=>{
+    const o=a.createOscillator(),og=a.createGain();o.type=type;o.detune.value=dt;
+    o.frequency.setValueAtTime(f*m,t);if(f2)o.frequency.exponentialRampToValueAtTime(f2*m,t+d);
+    og.gain.value=vol*.55;o.connect(og);og.connect(g);o.start(t);o.stop(t+d+.05);
+  });
+  g.connect(bus||sfxBus);
+}
+function noise(d,v,t0,hp,bus){
+  const a=ac();if(!a||(!bus&&muted))return;
+  const n=Math.floor(a.sampleRate*d),buf=a.createBuffer(1,n,a.sampleRate),ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++)ch[i]=(Math.random()*2-1)*(1-i/n);
+  const s=a.createBufferSource();s.buffer=buf;const f=a.createBiquadFilter();f.type='highpass';f.frequency.value=hp;
+  const g=a.createGain();g.gain.value=v;s.connect(f);f.connect(g);g.connect(bus||sfxBus);s.start(a.currentTime+Math.max(0,t0));
+}
+const SFX={
+ click:()=>tone(700,.07,'triangle',.22),
+ step:()=>tone(330,.08,'square',.09,0,220),
+ dice:()=>{for(let i=0;i<11;i++){noise(.05,.3,i*.095+Math.random()*.03,1800+Math.random()*2500);if(i%3===0)tone(180+Math.random()*80,.05,'square',.08,i*.095,100)}},
+ land:()=>{tone(170,.2,'sine',.6,0,55);noise(.08,.25,0,1500)},
+ gain:()=>{tone(988,.09,'square',.12);tone(1319,.14,'square',.12,.08);tone(1760,.3,'triangle',.2,.16)},
+ pay:()=>{tone(392,.14,'sawtooth',.14,0,250);tone(262,.25,'sawtooth',.14,.12,130)},
+ buy:()=>{[1046,1318,1568,2093].forEach((f,i)=>tone(f,.22,'triangle',.22,i*.07));noise(.15,.15,.2,6000)},
+ up:()=>{[392,523,659,784,1047].forEach((f,i)=>tone(f,.16,'square',.1,i*.065));tone(523,.5,'triangle',.18,.35)},
+ card:()=>{noise(.14,.25,0,3000);tone(660,.15,'triangle',.2,.04,990);tone(990,.3,'sine',.25,.14,1480)},
+ jail:()=>{for(let i=0;i<4;i++)tone(i%2?500:760,.22,'sawtooth',.14,i*.22,i%2?760:500);tone(110,.9,'square',.12,0,80)},
+ bust:()=>{tone(400,.7,'sawtooth',.22,0,50);tone(200,.8,'square',.12,.1,40);noise(.5,.3,.05,300)},
+ win:()=>{[523,659,784,1047].forEach((f,i)=>tone(f,.25,'triangle',.25,i*.13));[784,988,1175,1568].forEach((f,i)=>tone(f,.9,'triangle',.22,.6+i*.03));noise(.6,.2,.6,5000)},
+ turn:()=>{tone(880,.1,'sine',.25);tone(1320,.16,'sine',.25,.09)},
+ join:()=>{tone(784,.1,'triangle',.25);tone(1047,.1,'triangle',.25,.08);tone(1568,.25,'triangle',.28,.16)}
+};
+const sfx=n=>{try{SFX[n]()}catch(e){}};
+/* מוזיקת רקע: לופ של 4 אקורדים (Am F C G) עם בס, ארפג'יו וקצב */
+const MUS={bpm:108,step:0,next:0,timer:null};
+const CHORDS=[[57,60,64],[53,57,60],[48,52,55],[55,59,62]];
+const ARP=[0,1,2,1,0,1,2,1,0,1,2,1,2,1,0,1];
+const mf=m=>440*Math.pow(2,(m-69)/12);
+function musicStep(s,dt){
+  const ch=CHORDS[Math.floor(s/16)%4],st=s%16;
+  if(st%4===0)tone(125,.2,'sine',.9,dt,42,musBus);
+  if(st%2===1)noise(.04,.16,dt,7000,musBus);
+  if(st===4||st===12)noise(.13,.32,dt,1800,musBus);
+  if(st===0||st===6||st===8||st===14)tone(mf(ch[0]-24),.32,'sawtooth',.34,dt,null,musBus);
+  tone(mf(ch[ARP[st]]+12),.17,'triangle',.2,dt,null,musBus);
+  if(st===0)tone(mf(ch[2]+12),.9,'sine',.16,dt,null,musBus);
+}
+function musicTick(){
+  if(!AC)return;const sp=60/MUS.bpm/4;
+  while(MUS.next<AC.currentTime+.4){musicStep(MUS.step,MUS.next-AC.currentTime);MUS.step=(MUS.step+1)%64;MUS.next+=sp}
+}
+function musicStart(){const a=ac();if(!a||MUS.timer)return;MUS.next=a.currentTime+.1;MUS.step=0;MUS.timer=setInterval(musicTick,90)}
+function setMusic(on){musicOn=on;try{localStorage.setItem('mono-music',on?'1':'0')}catch(e){}
+  if(!ac())return;musBus.gain.setTargetAtTime(on?.3:0,AC.currentTime,.1);if(on)musicStart()}
+document.addEventListener('visibilitychange',()=>{if(!AC)return;if(document.hidden)AC.suspend();else AC.resume()});
+function anim(ms,fn){return new Promise(res=>{const t0=performance.now();(function f(n){const k=Math.min(1,Math.max(0,(n-t0)/ms));fn(k);k<1?requestAnimationFrame(f):res()})(t0)})}
+const ease=k=>1-Math.pow(1-k,3);
+function log(h){const l=$('#log'),d=document.createElement('div');d.innerHTML=h;l.appendChild(d);while(l.children.length>60)l.firstChild.remove();l.scrollTop=l.scrollHeight}
+const nm=p=>`<b style="color:${p.color}">${p.name}</b>`;
+
+function updateUI(){
+  $('#players').classList.toggle('many',players.length>5);
+  $('#players').innerHTML=players.map((p,i)=>{
+    const chips=TILES.map((t,k)=>owner[k]===i?`<span class="chip" title="${t.n}" style="background:${t.g?GC[t.g]:t.t==='rail'?'#94a3b8':'#a78bfa'}">${lvl[k]?`<i>${'▮'.repeat(lvl[k])}</i>`:''}</span>`:'').join('');
+    return `<div class="pl glass${i===ti&&p.alive?' turn':''}${p.alive?'':' out'}" style="--pc:${p.color}">
+      <div class="pl-h"><span class="dot"></span><span>${p.name}</span>${p.bot?'<span class="tag">בוט</span>':''}${p.inJail?'<span class="tag bad">בכלא</span>':''}${p.alive?'':'<span class="tag bad">פשט רגל</span>'}</div>
+      <div class="cash">${p.cash.toLocaleString('he-IL')}<small>קיקס</small></div><div class="chips">${chips}</div></div>`}).join('');
+}
+
+function setHi(){
+  const p=players[ti];const idx=p&&p.alive?p.pos:-1;
+  if(idx===hi)return;
+  if(hi>=0)tiles[hi].mat.emissive.set(0x000000);
+  hi=idx;if(hi>=0)tiles[hi].mat.emissive.set(players[ti].color);
+}
+
+function placeToken(p,pos,jailed){const [x,z]=tokenXZ(p,pos,jailed);p.mesh.position.set(x,.12,z)}
+async function hop(p,from,to,ms=240,jailed=false){
+  const [x0,z0]=[p.mesh.position.x,p.mesh.position.z],[x1,z1]=tokenXZ(p,to,jailed);
+  await anim(ms,k=>{const e=ease(k);p.mesh.position.set(x0+(x1-x0)*e,.12+Math.sin(Math.PI*k)*.55,z0+(z1-z0)*e);focusT.set(p.mesh.position.x*.45,0,p.mesh.position.z*.45)});
+  p.mesh.position.set(x1,.12,z1);
+}
+async function moveSteps(p,n){
+  for(let k=0;k<n;k++){const f=p.pos;p.pos=(p.pos+1)%40;setHi();sfx('step');await hop(p,f,p.pos,230);
+    if(p.pos===0){p.cash+=200;sfx('gain');log(`${nm(p)} עבר ב-GO וקיבל <b>200</b> קיקס`);updateUI()}}
+  focusT.set(0,0,0);
+}
+async function moveTo(p,idx){const n=(idx-p.pos+40)%40;await moveSteps(p,n)}
+async function slide(p,to,jailed=false){const f=p.pos;p.pos=to;setHi();await hop(p,f,to,650,jailed);focusT.set(0,0,0)}
+
+async function rollDice(){
+  const a=1+Math.floor(Math.random()*6),b=1+Math.floor(Math.random()*6),vals=[a,b];sfx('dice');
+  const ends=[[-1,.41,.4],[1,.41,.4]],qs=vals.map(topQuat);
+  const starts=dice.map((d,k)=>new THREE.Vector3(k?4:-4,5,9)),axes=dice.map(()=>new THREE.Vector3(Math.random()-.5,Math.random()-.5,Math.random()-.5).normalize());
+  const q0=dice.map(d=>d.quaternion.clone());
+  await anim(1150,k=>{const e=ease(k);
+    dice.forEach((d,j)=>{
+      d.position.set(starts[j].x+(ends[j][0]-starts[j].x)*e,.41+(starts[j].y-.41)*(1-e)+Math.sin(Math.PI*k)*2.2*(1-k*.5),starts[j].z+(ends[j][2]-starts[j].z)*e);
+      const spin=new THREE.Quaternion().setFromAxisAngle(axes[j],(1-e)*Math.PI*7);
+      d.quaternion.copy(spin).multiply(q0[j].clone().slerp(qs[j],e));
+    })});
+  dice.forEach((d,j)=>{d.position.set(...ends[j]);d.quaternion.copy(qs[j])});
+  sfx('land');lastRoll=a+b;return[a,b];
+}
+
+/* ask: כפתורים לאדם, החלטה אוטומטית לבוט */
+let resolveAsk=null,chatCmd=null;
+function ask(p,prompt,sub,opts,kind,ctx){
+  updateUI();
+  if(p.bot){
+    return(async()=>{showBar(`${p.name} (בוט)`,prompt,[]);await sleep(kind==='card'?1500:800);hideBar();return botPick(p,opts,kind,ctx)})();
+  }
+  return new Promise(res=>{
+    const bar=$('#bar'),btns=$('#btns');
+    const cmds=opts.filter(o=>!o.dis).map(o=>cmdOf(o.id)).filter((c,k,a)=>c&&a.indexOf(c)===k);
+    const hint=p.kick&&cmds.length?`בצ׳אט: ${cmds.join('  ·  ')}`:'';
+    const sub2=[sub,hint].filter(Boolean).join(' · ');
+    $('#prompt').innerHTML=`${prompt}${sub2?`<small>${sub2}</small>`:''}`;btns.innerHTML='';
+    const done=id=>{resolveAsk=null;chatCmd=null;bar.hidden=true;res(id)};
+    opts.forEach((o,k)=>{const b=document.createElement('button');b.type='button';b.className='btn'+(o.main||k===0&&!o.dis?' main':'');b.textContent=o.label;b.disabled=!!o.dis;
+      b.onclick=()=>{sfx('click');done(o.id)};btns.appendChild(b)});
+    resolveAsk=()=>{const f=opts.find(o=>!o.dis);if(f)done(f.id)};
+    chatCmd=(u,c)=>{if(!p.kick||u.toLowerCase()!==p.kick.toLowerCase())return;
+      const want=ALIAS[c];const o=want&&opts.find(o=>!o.dis&&cmdOf(o.id)===want);if(o){sfx('click');done(o.id)}};
+    bar.hidden=false;const f=btns.querySelector('button:not([disabled])');if(f)f.focus({preventScroll:true});
+  });
+}
+function showBar(a,b,btns){const bar=$('#bar');$('#prompt').innerHTML=`${a}<small>${b}</small>`;$('#btns').innerHTML='';bar.hidden=false}
+function hideBar(){$('#bar').hidden=true}
+addEventListener('keydown',e=>{if(e.code==='Space'&&resolveAsk&&document.activeElement.tagName!=='INPUT'){e.preventDefault();resolveAsk()}});
+
+function botPick(p,opts,kind,ctx){
+  const ids=opts.map(o=>o.id);
+  if(kind==='roll')return'roll';
+  if(kind==='card')return'ok';
+  if(kind==='jail'){return p.cash>700&&ids.includes('pay')&&Math.random()<.5?'pay':'roll'}
+  if(kind==='buy'){const t=TILES[ctx.i];const mine=t.g?TILES.filter((x,k)=>x.g===t.g&&owner[k]===p.i).length:0;
+    return ids.includes('buy')&&(p.cash-t.p>=150||mine>0&&p.cash-t.p>=50)?'buy':'skip'}
+  if(kind==='upg'){const u=opts.find(o=>o.id.startsWith('u:')&&!o.dis&&p.cash-o.cost>350);return u?u.id:'end'}
+  return ids[0];
+}
+
+function ownsGroup(o,g){return TILES.every((t,k)=>t.g!==g||owner[k]===o)}
+function countOwned(o,type){return TILES.filter((t,k)=>t.t===type&&owner[k]===o).length}
+function rentOf(i){
+  const t=TILES[i],o=owner[i];
+  if(t.t==='prop'){let r=t.p*RM[lvl[i]];if(lvl[i]===0&&ownsGroup(o,t.g))r*=2;return Math.max(5,Math.round(r/5)*5)}
+  if(t.t==='rail')return 25*Math.pow(2,countOwned(o,'rail')-1);
+  return lastRoll*(countOwned(o,'util')===2?10:4);
+}
+
+function bankrupt(p,creditor){
+  sfx('bust');log(`💥 ${nm(p)} פשט רגל!`);
+  TILES.forEach((t,k)=>{if(owner[k]===p.i){owner[k]=creditor?creditor.i:-1;lvl[k]=0}});
+  p.alive=false;p.cash=0;scene.remove(p.mesh);refreshMarks();updateUI();setHi();
+}
+async function pay(p,amt,creditor,why){
+  if(p.cash>=amt){p.cash-=amt;if(creditor)creditor.cash+=amt;sfx('pay');log(`${nm(p)} שילם <b>${amt}</b> קיקס ${why||''}`)}
+  else{if(creditor)creditor.cash+=p.cash;log(`${nm(p)} לא מסוגל לשלם ${amt} קיקס ${why||''}`);bankrupt(p,creditor)}
+  updateUI();
+}
+
+const CHEST=[
+ {t:'פרס מהקהילה',b:'הצופים בחרו בך סטרימר השבוע. קבל 100 קיקס.',f:async p=>{p.cash+=100}},
+ {t:'ספונסר חדש',b:'חברת משקאות חתמה איתך על חוזה פרסום. קבל 200 קיקס.',f:async p=>{p.cash+=200}},
+ {t:'תרומות מהצ׳אט',b:'ליל סטרים חם. קבל 150 קיקס.',f:async p=>{p.cash+=150}},
+ {t:'קנס מודרציה',b:'הפרת כללי הצ׳אט. שלם 50 קיקס.',f:async p=>{await pay(p,50,null,'(קנס)')}},
+ {t:'התקדם ל-GO',b:'קדימה לנקודת ההתחלה וקבל 200 קיקס.',f:async p=>{await moveTo(p,0)}},
+ {t:'יום הולדת',b:'כל שחקן נותן לך 30 קיקס.',f:async p=>{for(const q of players)if(q!==p&&q.alive&&p.alive)await pay(q,30,p,'(יום הולדת)')}}
+];
+const SURP=[
+ {t:'באן!',b:'הסטרים שלך הושעה. לך ישר לכלא.',f:async p=>{await toJail(p)}},
+ {t:'הגרלה',b:'זכית בהגרלת צופים. קבל 120 קיקס.',f:async p=>{p.cash+=120}},
+ {t:'הטלפון נפל',b:'הטלפון נפל לאמבטיה. שלם 80 קיקס.',f:async p=>{await pay(p,80,null,'(טלפון)')}},
+ {t:'תקלת חיבור',b:'חזור 3 משבצות אחורה.',f:async p=>{await slide(p,(p.pos+37)%40);await land(p,true)}},
+ {t:'שדרוג ציוד',b:'מיקרופון חדש לסטרים. שלם 60 קיקס.',f:async p=>{await pay(p,60,null,'(ציוד)')}},
+ {t:'סאבים חדשים',b:'צופים שלחו סאבים. קבל 90 קיקס.',f:async p=>{p.cash+=90}},
+ {t:'קולאב',b:'התקדם עד שירי.',f:async p=>{await moveTo(p,9);await land(p,true)}},
+ {t:'הפסקת חשמל',b:'התקדם לחברת החשמל.',f:async p=>{await moveTo(p,12);await land(p,true)}}
+];
+
+async function toJail(p){sfx('jail');log(`🚔 ${nm(p)} נשלח לכלא`);p.inJail=true;p.jailTurns=0;await slide(p,10,true);updateUI()}
+
+async function land(p,fromCard){
+  if(!p.alive)return;
+  const i=p.pos,t=TILES[i];
+  if(t.t==='prop'||t.t==='rail'||t.t==='util'){
+    if(owner[i]<0){
+      if(p.cash<t.p){log(`${nm(p)} נחת על ${t.n} אבל אין לו מספיק קיקס`);return}
+      const c=await ask(p,`לקנות את ${t.n}?`,`${money(t.p)} · יש לך ${money(p.cash)}`,[{id:'buy',label:`קנה ב-${t.p}`},{id:'skip',label:'דלג',main:false}],'buy',{i});
+      if(c==='buy'){p.cash-=t.p;owner[i]=p.i;sfx('buy');log(`${nm(p)} קנה את <b>${t.n}</b> ב-${t.p}`);refreshMarks();updateUI()}
+    }else if(owner[i]!==p.i){const o=players[owner[i]],r=rentOf(i);log(`${nm(p)} נחת על ${t.n} של ${nm(o)}`);await pay(p,r,o,'שכירות')}
+  }else if(t.t==='chest'||t.t==='surp'){
+    const deck=t.t==='chest'?CHEST:SURP,c=deck[Math.floor(Math.random()*deck.length)];
+    const col=t.t==='chest'?'#22d3ee':'#f472b6',el=$('#card');
+    el.querySelector('.card-in').style.setProperty('--cc',col);
+    $('#card-k').textContent=t.t==='chest'?'תיבת המזל':'הפתעה';$('#card-t').textContent=c.t;$('#card-b').textContent=c.b;sfx('card');el.hidden=false;
+    await ask(p,'קלף חדש','',[{id:'ok',label:'הבנתי'}],'card');
+    el.hidden=true;log(`${nm(p)} שלף קלף: <b>${c.t}</b>`);
+    const before=p.cash;await c.f(p);if(p.alive&&p.cash>before)sfx('gain');updateUI();
+  }else if(t.t==='tax'){await pay(p,t.p,null,`(${t.n})`)}
+  else if(t.t==='gojail'){await toJail(p)}
+}
+
+function upgrades(p){
+  return TILES.map((t,k)=>({t,k})).filter(({t,k})=>t.t==='prop'&&owner[k]===p.i&&lvl[k]<3&&ownsGroup(p.i,t.g))
+    .map(({t,k})=>({id:'u:'+k,label:`שדרג ${t.n} (${Math.round(t.p/2)})`,cost:Math.round(t.p/2),dis:p.cash<Math.round(t.p/2),main:false}));
+}
+
+async function turn(p,id){
+  let doubles=0;
+  for(;;){
+    if(id!==gameId)return;
+    updateUI();setHi();
+    if(p.inJail){
+      const c=await ask(p,`${p.name} בכלא`,`ניסיון ${p.jailTurns+1} מתוך 3 · דאבל משחרר`,[{id:'roll',label:'🎲 נסה דאבל'},{id:'pay',label:'שלם 50 וצא',dis:p.cash<50,main:false}],'jail');
+      if(c==='pay'){await pay(p,50,null,'(יציאה מהכלא)');p.inJail=false;await slide(p,10,false);updateUI();if(!p.alive)return;continue}
+      const[a,b]=await rollDice();log(`${nm(p)} גלגל ${a} ו-${b}`);
+      if(a===b){p.inJail=false;log(`${nm(p)} יצא מהכלא עם דאבל`);await slide(p,10,false);await moveSteps(p,a+b);await land(p);return}
+      p.jailTurns++;
+      if(p.jailTurns>=3){await pay(p,50,null,'(יציאה מהכלא)');if(!p.alive)return;p.inJail=false;await slide(p,10,false);await moveSteps(p,a+b);await land(p)}
+      return;
+    }
+    await ask(p,`התור של ${p.name}`,doubles?'דאבל! זורקים שוב':'',[{id:'roll',label:'🎲 גלגל קוביות'}],'roll');
+    const[a,b]=await rollDice();
+    log(`${nm(p)} גלגל <b>${a}</b> ו-<b>${b}</b>${a===b?' (דאבל)':''}`);
+    if(a===b)doubles++;
+    if(doubles===3){log(`${nm(p)} קיבל 3 דאבלים ברצף`);await toJail(p);return}
+    await moveSteps(p,a+b);
+    await land(p);
+    if(!p.alive||p.inJail)return;
+    if(a===b)continue;
+    return;
+  }
+}
+async function postTurn(p){
+  for(;;){
+    if(!p.alive)return;
+    const ups=upgrades(p);if(!ups.length)return;
+    const c=await ask(p,'לשדרג נכס?','סט מלא מאפשר לבנות עד 3 רמות',[...ups.slice(0,5),{id:'end',label:'סיים תור',main:true}],'upg');
+    if(c==='end')return;
+    const k=+c.slice(2),cost=Math.round(TILES[k].p/2);
+    p.cash-=cost;lvl[k]++;sfx('up');log(`${nm(p)} שדרג את <b>${TILES[k].n}</b> לרמה ${lvl[k]}`);refreshMarks();updateUI();
+  }
+}
+
+async function loop(){
+  const id=gameId;
+  while(id===gameId){
+    const p=players[ti];
+    if(p.alive){
+      await turn(p,id);if(id!==gameId)return;
+      await postTurn(p);if(id!==gameId)return;
+    }
+    const alive=players.filter(q=>q.alive);
+    if(alive.length<=1){win(alive[0]);return}
+    do{ti=(ti+1)%players.length}while(!players[ti].alive);if(!players[ti].bot)sfx('turn');
+    updateUI();setHi();
+  }
+}
+function win(p){sfx('win');
+  hideBar();updateUI();
+  $('#win-t').textContent=p?`${p.name} ניצח!`:'אין מנצח';
+  $('#win-p').textContent=p?`נשארו לו ${money(p.cash)} וכל הלוח בידיים שלו.`:'';
+  $('#win').hidden=false;
+}
+
+/* ───────── התחלה / הגדרות ───────── */
+let boardBuilt=false,count=2;
+function renderRows(){
+  $('#rows').innerHTML=Array.from({length:count},(_,i)=>`<div class="prow"><span class="dot" style="--pc:${PCOL[i]}"></span>
+    <input type="text" id="pn${i}" maxlength="14" value="${['סטרימר אורח','בוט מאור','בוט עדן','בוט שילו','בוט ביגי','בוט פדרו','בוט זיווי','בוט יקיר','בוט ליאור','בוט עודד'][i]}" aria-label="שם שחקן ${i+1}">
+    <label><input type="checkbox" id="pb${i}" ${i>0?'checked':''}>בוט</label></div>`).join('');
+}
+$('#count').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;count=+b.dataset.n;
+  $('#count').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderRows()});
+function startGame(){
+  let list;
+  if(mode==='kick'){
+    const meOn=streamerOn(),slug=slugOf($('#kch').value);
+    list=KICK.joined.slice(0,meOn?MAXP-1:MAXP).map(j=>({name:j.n,bot:false,kick:j.u}));
+    if(meOn)list.unshift({name:esc($('#kme').value.trim()||slug||'הסטרימר'),bot:false,kick:slug||null});
+    if(!list.length){kStat('אף צופה לא הצטרף עדיין. כתבו !join בצ׳אט או סמנו שהסטרימר משחק.',true);return}
+    const bn=['בוט מאור','בוט עדן','בוט שילו','בוט ביגי'];while(list.length<2)list.push({name:bn[list.length],bot:true});
+  }else list=Array.from({length:count},(_,i)=>({name:esc($('#pn'+i).value.trim()||'שחקן '+(i+1)),bot:$('#pb'+i).checked}));
+  ac();if(musicOn)musicStart();
+  gameId++;
+  players.forEach(p=>p.mesh&&scene.remove(p.mesh));
+  players=list.map((o,i)=>({i,name:o.name,bot:o.bot,kick:o.kick||null,color:PCOL[i],cash:1500,pos:0,inJail:false,jailTurns:0,alive:true,mesh:makePawn(PCOL[i],list.length)}));
+  owner=TILES.map(()=>-1);lvl=TILES.map(()=>0);ti=0;hi=-1;
+  players.forEach(p=>{scene.add(p.mesh);placeToken(p,0)});
+  refreshMarks();$('#log').innerHTML='';log('המשחק התחיל. כל שחקן מתחיל עם <b>1,500</b> קיקס.');
+  $('#setup').hidden=true;$('#win').hidden=true;$('#card').hidden=true;hideBar();updateUI();setHi();
+  cam.auto=false;$('#cSpin').setAttribute('aria-pressed','false');cam.th=0;cam.tPh=.95;cam.tD=fitDist();
+  loop();
+}
+$('#start').onclick=startGame;
+const toSetup=()=>{gameId++;hideBar();$('#win').hidden=true;$('#card').hidden=true;$('#setup').hidden=false};
+$('#again').onclick=toSetup;$('#cNew').onclick=toSetup;
+$('#cAngle').onclick=()=>{cam.tPh=.95;cam.tD=fitDist();cam.th=Math.round(cam.th/(Math.PI/2))*(Math.PI/2)};
+$('#cTop').onclick=()=>{cam.tPh=.12;cam.tD=fitDist()*1.05};
+$('#cSnd').setAttribute('aria-pressed',String(!muted));
+$('#cSnd').onclick=e=>{muted=!muted;try{localStorage.setItem('mono-mute',muted?'1':'0')}catch(x){}e.currentTarget.setAttribute('aria-pressed',String(!muted));if(!muted){ac();sfx('click')}};
+$('#cSpin').onclick=e=>{cam.auto=!cam.auto;e.currentTarget.setAttribute('aria-pressed',cam.auto)};
+
+/* ───────── קיק: הצטרפות ושליטה דרך צ'אט ───────── */
+let mode='local';
+const KICK={ws:null,joined:[]};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CMD={roll:'!roll',buy:'!buy',skip:'!skip',pay:'!pay',ok:'!ok',end:'!end'};
+const cmdOf=id=>id.startsWith('u:')?'!up':(CMD[id]||'');
+const ALIAS={'!roll':'!roll','!r':'!roll','!קוביות':'!roll','!buy':'!buy','!b':'!buy','!קנה':'!buy','!skip':'!skip','!דלג':'!skip','!pay':'!pay','!שלם':'!pay','!ok':'!ok','!אישור':'!ok','!end':'!end','!סיום':'!end','!up':'!up','!שדרג':'!up'};
+function kStat(t,bad){const e=$('#kstat');e.textContent=t;e.style.color=bad?'var(--danger)':'var(--mute)'}
+const streamerOn=()=>$('#kmeOn').checked;
+function renderKick(){
+  const on=streamerOn(),off=on?1:0;
+  const me=on?`<div class="prow"><span class="dot" style="--pc:${PCOL[0]}"></span><b>${esc($('#kme').value.trim()||slugOf($('#kch').value)||'הסטרימר')}</b><span class="tag" style="font-size:11px;color:var(--mute)">סטרימר</span></div>`:'';
+  const vs=KICK.joined.slice(0,MAXP-off).map((j,i)=>`<div class="prow"><span class="dot" style="--pc:${PCOL[i+off]}"></span><b>${j.n}</b><button type="button" class="kx" data-i="${i}" aria-label="הסר את ${j.n}">✕</button></div>`).join('');
+  $('#klist').innerHTML=(me+vs)||'<div class="lbl">עדיין אף אחד לא הצטרף</div>';
+}
+$('#klist').addEventListener('click',e=>{const b=e.target.closest('.kx');if(!b)return;KICK.joined.splice(+b.dataset.i,1);renderKick()});
+function onChat(user,text){
+  if(!user)return;const c=text.trim().toLowerCase().split(/\s+/)[0];
+  if(!$('#setup').hidden&&mode==='kick'&&(c==='!join'||c==='!הצטרף')){
+    if(streamerOn()&&user.toLowerCase()===slugOf($('#kch').value))return;
+    if(KICK.joined.length>=(streamerOn()?MAXP-1:MAXP)||KICK.joined.some(j=>j.u.toLowerCase()===user.toLowerCase()))return;
+    const n=user.replace(/[^\w֐-׿.\-]/g,'').slice(0,18)||'צופה';
+    KICK.joined.push({u:user,n});renderKick();sfx('join');return;
+  }
+  if(chatCmd)chatCmd(user,c);
+}
+const KEYS={dflt:'34bf7a0ff419a2a775b9',cluster:'us2'};
+function closeKick(){KICK.want=false;clearTimeout(KICK.rt);if(KICK.ws){try{KICK.ws.onclose=null;KICK.ws.onerror=null;KICK.ws.close()}catch(e){}KICK.ws=null}}
+const withTimeout=(ms)=>{const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);return{signal:c.signal,done:()=>clearTimeout(t)}};
+const findStr=(o,k)=>{if(o&&typeof o==='object'){if(typeof o[k]==='string')return o[k];for(const v of Object.values(o)){const x=findStr(v,k);if(x)return x}}return''};
+async function discoverKey(){
+  const t=withTimeout(4000);
+  try{
+    const r=await fetch('https://web.kick.com/api/v1/realtime/connection',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({accepted_providers:['pusher']}),signal:t.signal});
+    const j=await r.json();t.done();const key=findStr(j,'app_key');
+    if(key)return{key,cluster:findStr(j,'cluster')||KEYS.cluster};
+  }catch(e){t.done()}
+  return null;
+}
+function tryConnect(room,cands,i){
+  const c=cands[i];kStat(`מתחבר לקיק (ניסיון ${i+1} מתוך ${cands.length})...`);
+  let ws,settled=false;
+  const next=why=>{if(settled)return;settled=true;try{ws.onclose=null;ws.onerror=null;ws.close()}catch(e){}
+    if(i+1<cands.length)tryConnect(room,cands,i+1);else kStat(why,true)};
+  try{ws=new WebSocket(`wss://ws-${c.cluster}.pusher.com/app/${c.key}?protocol=7&client=js&version=8.4.0&flash=false`)}
+  catch(e){kStat('הדפדפן לא מאפשר חיבור WebSocket מהדף הזה. השתמשו בגרסה שמאוחסנת באתר שלכם.',true);return}
+  KICK.ws=ws;
+  ws.onmessage=ev=>{let m;try{m=JSON.parse(ev.data)}catch(x){return}
+    if(m.event==='pusher:connection_established')ws.send(JSON.stringify({event:'pusher:subscribe',data:{auth:'',channel:'chatrooms.'+room+'.v2'}}));
+    else if(m.event==='pusher:error'){let d=m.data;try{d=typeof d==='string'?JSON.parse(d):d}catch(x){}
+      next(`קיק דחתה את החיבור (קוד ${d&&d.code||'?'}). ייתכן שמפתח הצ׳אט שלה הוחלף שוב. נסו להדביק מפתח חדש תחת "מתקדם".`)}
+    else if(m.event==='pusher_internal:subscription_succeeded'){settled=true;KICK.want=true;KICK.room=room;KICK.cand=c;
+      try{localStorage.setItem('mono-kick-room',String(room))}catch(e){}kStat('מחובר לצ׳אט. כתבו !join כדי להצטרף.')}
+    else if(m.event==='pusher:ping')ws.send(JSON.stringify({event:'pusher:pong',data:{}}));
+    else if(m.event==='App\\Events\\ChatMessageEvent'){let d=m.data;try{d=typeof d==='string'?JSON.parse(d):d}catch(x){return}
+      onChat(d&&d.sender&&d.sender.username,String(d&&d.content||''))}};
+  ws.onerror=()=>next('החיבור ל-WebSocket נכשל. בדקו חוסם פרסומות, VPN או חומת אש, ונסו שוב. בתוך Claude החיבור חסום תמיד.');
+  ws.onclose=()=>{if(!settled)return next('החיבור נסגר לפני שהסתיים.');
+    if(KICK.ws===ws){KICK.ws=null;kStat('החיבור נסגר, מנסה להתחבר מחדש...',true);
+      clearTimeout(KICK.rt);KICK.rt=setTimeout(()=>{if(KICK.want)tryConnect(KICK.room,[KICK.cand],0)},3000)}};
+}
+function extractRoom(t){t=String(t||'').trim();let m=t.match(/"chatroom"\s*:\s*\{\s*"id"\s*:\s*(\d+)/);if(m)return+m[1];
+  if(t.length>20)return 0;m=t.match(/\d{3,}/);return m?+m[0]:0}
+const slugOf=v=>String(v).trim().toLowerCase().replace(/^.*kick\.com\//,'').replace(/[/?#].*$/,'').replace(/[^a-z0-9_\-]/g,'');
+async function kickConnect(){
+  const ch=slugOf($('#kch').value);
+  try{localStorage.setItem('mono-kick-ch',ch)}catch(e){}
+  let room=extractRoom($('#kroom').value);
+  if(!room&&!ch){kStat('הכניסו שם ערוץ.',true);return}
+  closeKick();kStat('מתחבר...');
+  if(!room&&ch){const t=withTimeout(4000);try{const r=await fetch('https://kick.com/api/v2/channels/'+ch,{signal:t.signal});const j=await r.json();t.done();room=j&&j.chatroom&&j.chatroom.id||0}catch(e){t.done()}}
+  if(!room){kStat('קיק חוסמת שליפה אוטומטית של מזהה החדר מהדפדפן. לחצו על הקישור "פתחו את נתוני הערוץ", העתיקו את כל הטקסט והדביקו בשדה מזהה החדר.',true);$('#kroom').focus();return}
+  const cands=[];const d=await discoverKey();if(d)cands.push(d);
+  const mk=$('#kkey').value.trim();if(mk)cands.push({key:mk,cluster:KEYS.cluster});
+  cands.push({key:KEYS.dflt,cluster:KEYS.cluster});
+  tryConnect(room,cands.filter((c,k,a)=>a.findIndex(x=>x.key===c.key)===k),0);
+}
+$('#kcon').onclick=kickConnect;
+$('#kch').addEventListener('keydown',e=>{if(e.key==='Enter')kickConnect()});
+try{$('#kch').value=localStorage.getItem('mono-kick-ch')||'';$('#kroom').value=localStorage.getItem('mono-kick-room')||''}catch(e){}
+const setApi=()=>{$('#kapi').href='https://kick.com/api/v2/channels/'+slugOf($('#kch').value)};
+$('#kch').addEventListener('input',()=>{setApi();if($('#kme').dataset.auto!=='0')$('#kme').value=slugOf($('#kch').value);renderKick()});
+$('#kme').addEventListener('input',e=>{e.target.dataset.auto='0';renderKick()});
+$('#kmeOn').addEventListener('change',renderKick);
+if(!$('#kme').value)$('#kme').value=slugOf($('#kch').value);
+$('#kch').addEventListener('change',()=>{$('#kroom').value=''});
+$('#mode').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;mode=b.dataset.m;
+  $('#mode').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  $('#kickBox').hidden=mode!=='kick';$('#cntBox').hidden=$('#rows').hidden=mode==='kick';if(mode==='kick')renderKick()});
+$('#cMus').setAttribute('aria-pressed',String(musicOn));
+$('#cMus').onclick=e=>{setMusic(!musicOn);e.currentTarget.setAttribute('aria-pressed',String(musicOn))};
+
+/* ───────── אתחול ───────── */
+function frame(){camUpdate();ring.material.opacity=.45+.15*Math.sin(performance.now()/700);renderer.render(scene,camera);requestAnimationFrame(frame)}
+async function boot(){
+  try{await Promise.race([Promise.all(['500 20px Rubik','700 20px Rubik','800 20px Rubik','400 20px Heebo','700 20px Heebo'].map(f=>document.fonts.load(f))),sleep(1800)])}catch(e){}
+  buildBoard();renderRows();
+  // תצוגה ראשונית מאחורי חלון ההגדרות
+  owner=TILES.map(()=>-1);lvl=TILES.map(()=>0);
+  cam.th=.5;cam.auto=true;frame();
+}
+boot();
+// חשיפה לבדיקות
+addEventListener('pointerdown',()=>ac(),{once:true});
+window.__game={cam,get players(){return players}};
+})();
+</script>
+
+</body>
+</html>
